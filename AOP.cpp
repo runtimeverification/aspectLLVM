@@ -16,22 +16,58 @@ using namespace llvm;
 namespace {
   struct AOP : public ModulePass {
     static char ID; // Pass identification, replacement for typeid
-    AOP() : ModulePass(ID) {}
+    AOP() : ModulePass(ID) {
+      readConfig();
+    }
+    std::map<std::string, std::string> beforeExec; 
+    std::map<std::string, std::string> beforeCall; 
+    std::map<std::string, std::string> afterCall; 
+
+    void readConfig() {
+      std::ifstream str("aspect.map");
+      std::string key,value,when,what,action;
+      while ((str >> when)) {
+        assert (when == "before" || when == "after");
+        str >> what;
+        assert (what == "executing" || what == "calling");
+        str >> key;
+        str >> action;
+        assert (action == "call");
+        str >> value;
+        if (when == "before") {
+          if (what == "executing") {
+            beforeExec.insert(std::make_pair(key, value));
+          } else if (what == "calling") {
+            beforeCall.insert(std::make_pair(key, value));
+          } else {
+            fail(when, what);
+          }
+        } else if (when == "after") {
+          if (what == "calling") {
+            afterCall.insert(std::make_pair(key, value));
+          } else {
+            fail(when, what);
+          }
+        } else {
+          fail(when, what);
+        }
+      }
+    }
+
+    void fail(std::string when, std::string what) {
+            std::cerr << "Instrumentation point " << when << " " << what 
+              << " not supported!" << std::endl;
+    }
 
     virtual bool runOnModule(Module &M) {
-      std::ifstream str("aspect.map");
-      std::map<std::string, std::string> mymap; 
-      std::string key,value;
-      while ((str >> key)) {
-        str >> value;
-        mymap.insert(std::make_pair(key, value));
-      }
       std::map<std::string, std::string>::iterator i,ie; 
-      for (i = mymap.begin(), ie = mymap.end(); i != ie; i++) {
-        std::cerr << "Inserting hook '" << i->second 
-          << "' before executing the body of '" << i->first << "'"
-          << std::endl;
-        hookBeforeExecute(M, i->first, i->second);
+      if (!beforeExec.empty()) {
+        for (i = beforeExec.begin(), ie = beforeExec.end(); i != ie; i++) {
+          std::cerr << "Inserting hook '" << i->second 
+            << "' before executing the body of '" << i->first << "'"
+            << std::endl;
+          hookBeforeExecute(M, i->first, i->second);
+        }
       }
 
       
@@ -42,15 +78,25 @@ namespace {
         std::string function, 
         std::string hookFn) {
       Function *F = M.getFunction(function.c_str());
+      /*
       Constant *hookFunc = M.getOrInsertFunction(hookFn.c_str(), 
           Type::getVoidTy(M.getContext()), (Type*) 0);
+          */
+      Constant *hookFunc = M.getOrInsertFunction(hookFn.c_str(), 
+          F->getFunctionType());
 
       Function* hook = cast<Function>(hookFunc);
       BasicBlock &BB = F->getEntryBlock();
 
       BasicBlock::iterator BI = BB.begin();
 
-      CallInst::Create(hook, "", (Instruction *)BI); 
+      std::vector<Value *> args;
+      for (Function::arg_iterator i = F->arg_begin(), e = F-> arg_end();
+          i != e; i++) {
+        args.push_back(i);
+      }
+      //CallInst::Create(hook, "", (Instruction *)BI); 
+      CallInst::Create(hook, args, "", (Instruction *)BI); 
 
     }
   };
