@@ -12,9 +12,12 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Instruction.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 using namespace llvm;
 
 namespace {
+
+  enum ReturnType { NONE, CAPTURE, SAME };
 
   struct CallInstInstrPoint {
     CallInstInstrPoint(CallInst* c, std::string h, Value* a = NULL) {
@@ -25,8 +28,6 @@ namespace {
     Value* after;
   };
 
-  std::vector<CallInstInstrPoint*> callInstPoints; 
-
   struct AOP : public ModulePass {
     static char ID; // Pass identification, replacement for typeid
     AOP() : ModulePass(ID) {
@@ -35,12 +36,16 @@ namespace {
     std::map<std::string, std::string> beforeExec; 
     std::map<std::string, std::string> beforeCall; 
     std::map<std::string, std::string> afterCall; 
+    std::map<std::string, std::string> insteadOfCall; 
+
+    std::vector<CallInstInstrPoint*> callInstPoints; 
+    std::vector<CallInstInstrPoint*> insteadOfInstPoints; 
 
     void readConfig() {
       std::ifstream str("aspect.map");
       std::string key,value,when,what,action;
       while ((str >> when)) {
-        assert (when == "before" || when == "after");
+        assert (when == "before" || when == "after" || "instead-of");
         str >> what;
         assert (what == "executing" || what == "calling");
         str >> key;
@@ -61,6 +66,12 @@ namespace {
           } else {
             fail(when, what);
           }
+        } else if (when == "instead-of") {
+          if (what == "calling") {
+            insteadOfCall.insert(std::make_pair(key, value));
+          } else {
+            fail(when, what);
+          }
         } else {
           fail(when, what);
         }
@@ -74,6 +85,7 @@ namespace {
 
     virtual bool runOnModule(Module &M) {
       callInstPoints.clear();
+      insteadOfInstPoints.clear();
       std::map<std::string, std::string>::iterator i,ie; 
       if (!beforeExec.empty()) {
         for (i = beforeExec.begin(), ie = beforeExec.end(); i != ie; i++) {
@@ -84,7 +96,8 @@ namespace {
         }
       }
 
-      if (!beforeCall.empty() || !afterCall.empty()) {
+      if (!beforeCall.empty() || !afterCall.empty() 
+          || !insteadOfCall.empty()) {
         for (Module::iterator fi = M.begin(), fe = M.end(); 
             fi != fe; fi++) { 
           for (Function::iterator bbi = fi->begin(), bbe = fi->end();
@@ -113,6 +126,11 @@ namespace {
                   //std::cerr << "Calling " << i->second 
                     //<< " after calling " << fnName << std::endl;
                 }
+                if ((i = insteadOfCall.find(fnName)) 
+                    != insteadOfCall.end()) {
+                  insteadOfInstPoints.push_back(
+                      new CallInstInstrPoint(cinst, i->second));
+                }
               }
             }
           }
@@ -124,32 +142,20 @@ namespace {
           ipi != ipe; ipi++) {
         CallInstInstrPoint* ip = *ipi;
         instrumentCallPoint(M, ip);
-     }
+      }
+      for (ipi = insteadOfInstPoints.begin(), 
+          ipe = insteadOfInstPoints.end(); ipi != ipe; ipi++) {
+        CallInstInstrPoint* ip = *ipi;
+        replaceCallPoint(M, ip);
+      }
+
       return true;
     }
 
-
-    void instrumentCallPoint(Module& M,
-        CallInstInstrPoint* ip) {
-      CallInst* cinst = ip->cinst;
-      std::cerr << "Inserting call to '" << ip->hookName << "' ";
-      if (ip->after) std::cerr << "after";
-      else std::cerr << "before";
-      Function* fn = cinst->getCalledFunction();
-      std::string fnName(fn->getName().data());
-      std::cerr << " calling '" << fnName << "'" << std::endl;
-      FunctionType* ft = fn->getFunctionType();
-      std::vector<Type *> types(ft->param_begin(), ft->param_end());
-      bool addReturn = ip->after && !ft->getReturnType()->isVoidTy();
-      if (addReturn) {
-        types.insert(types.begin(), ft->getReturnType());
-      }
-      FunctionType* hookFT = FunctionType::get(
-          Type::getVoidTy(M.getContext()), types, ft->isVarArg());
-      Constant *hookFunc = M.getOrInsertFunction(ip->hookName.c_str(), 
-          hookFT);
-      Function* hook = cast<Function>(hookFunc);
-      std::vector<Value *> args;
+    void setArgs(CallInst* cinst, 
+        bool addReturn,
+        std::vector<Value *>& args
+        ) {
       if (addReturn) {
         args.push_back(cinst);
       }
@@ -157,6 +163,47 @@ namespace {
           i != e; i++) {
         args.push_back(cinst->getArgOperand(i));
       }
+    }
+
+    Function* getHookFunction(Module& M, 
+        FunctionType* ft,
+        const char* name,
+        ReturnType retType) {
+      std::vector<Type *> types(ft->param_begin(), ft->param_end());
+      Type* returnType;
+      switch (retType) {
+        case CAPTURE: {
+                        Type* fnRetType = ft->getReturnType();
+                        if (!fnRetType->isVoidTy())
+                          types.insert(types.begin(), fnRetType);
+                      }
+        case NONE:
+          returnType = Type::getVoidTy(M.getContext());
+          break;
+        case SAME:
+          returnType = ft->getReturnType();
+      }
+      FunctionType* hookFT = FunctionType::get(
+          returnType, types, ft->isVarArg());
+      Constant *hookFunc = M.getOrInsertFunction(name, 
+          hookFT);
+      return cast<Function>(hookFunc);
+    }
+
+    void instrumentCallPoint(Module& M, CallInstInstrPoint* ip) {
+      CallInst* cinst = ip->cinst;
+      std::cerr << "Inserting call to '" << ip->hookName << "' ";
+      if (ip->after) std::cerr << "after";
+      else std::cerr << "before";
+      Function* fn = cinst->getCalledFunction();
+      FunctionType* ft = fn->getFunctionType();
+      std::string fnName(fn->getName().data());
+      std::cerr << " calling '" << fnName << "'." << std::endl;
+      bool addReturn = ip->after && !ft->getReturnType()->isVoidTy();
+      Function* hook = getHookFunction(M, ft, ip->hookName.c_str(), 
+          addReturn ? CAPTURE : NONE);
+      std::vector<Value *> args;
+      setArgs(cinst, addReturn, args);
       if (ip->after) {
         if (Instruction *before = dyn_cast<Instruction>(ip->after)) {
           CallInst::Create(hook, args, "", before); 
@@ -167,6 +214,21 @@ namespace {
       } else {
         CallInst::Create(hook, args, "", cinst); 
       }
+    }
+
+    void replaceCallPoint(Module& M, CallInstInstrPoint* ip) {
+      CallInst* cinst = ip->cinst;
+      Function* fn = cinst->getCalledFunction();
+      FunctionType* ft = fn->getFunctionType();
+      std::string fnName(fn->getName().data());
+      std::cerr << "Replacing call to '" << fnName 
+        << "' by '" << ip->hookName << "'." << std::endl;
+      Function* hook = getHookFunction(M, ft, ip->hookName.c_str(), SAME);
+      std::vector<Value *> args;
+      setArgs(cinst, false, args);
+      BasicBlock::iterator ii(cinst);
+      ReplaceInstWithInst(cinst->getParent()->getInstList(), ii,
+          CallInst::Create(hook, args, cinst->getName()));
     }
 
     void hookBeforeExecute(Module& M, 
