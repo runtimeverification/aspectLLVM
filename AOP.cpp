@@ -77,7 +77,7 @@ namespace {
       std::map<std::string, std::string>::iterator i,ie; 
       if (!beforeExec.empty()) {
         for (i = beforeExec.begin(), ie = beforeExec.end(); i != ie; i++) {
-          std::cerr << "Inserting hook '" << i->second 
+          std::cerr << "Inserting call to '" << i->second 
             << "' before executing the body of '" << i->first << "'"
             << std::endl;
           hookBeforeExecute(M, i->first, i->second);
@@ -132,12 +132,12 @@ namespace {
     void instrumentCallPoint(Module& M,
         CallInstInstrPoint* ip) {
       CallInst* cinst = ip->cinst;
-      std::cerr << "Calling " << ip->hookName;
-      if (ip->after) std::cerr << " after ";
-      else std::cerr << " before ";
+      std::cerr << "Inserting call to '" << ip->hookName << "' ";
+      if (ip->after) std::cerr << "after";
+      else std::cerr << "before";
       Function* fn = cinst->getCalledFunction();
       std::string fnName(fn->getName().data());
-      std::cerr << " calling " << fnName << std::endl;
+      std::cerr << " calling '" << fnName << "'" << std::endl;
       FunctionType* ft = fn->getFunctionType();
       std::vector<Type *> types(ft->param_begin(), ft->param_end());
       bool addReturn = ip->after && !ft->getReturnType()->isVoidTy();
@@ -151,18 +151,18 @@ namespace {
       Function* hook = cast<Function>(hookFunc);
       std::vector<Value *> args;
       if (addReturn) {
-        args.push_back(cinst->getCalledValue());
+        args.push_back(cinst);
       }
       for (unsigned i = 0, e = cinst->getNumArgOperands(); 
           i != e; i++) {
         args.push_back(cinst->getArgOperand(i));
       }
       if (ip->after) {
-        if (CallInst *ci = dyn_cast<CallInst>(ip->after)) {
-          CallInst::Create(hook, args, "", ci); 
+        if (Instruction *before = dyn_cast<Instruction>(ip->after)) {
+          CallInst::Create(hook, args, "", before); 
         } else {
-          BasicBlock *bb = cast<BasicBlock>(ip->after);
-          CallInst::Create(hook, args, "", bb); 
+          BasicBlock *at_end = cast<BasicBlock>(ip->after);
+          CallInst::Create(hook, args, "", at_end); 
         }
       } else {
         CallInst::Create(hook, args, "", cinst); 
@@ -193,5 +193,5 @@ namespace {
 }
 
 char AOP::ID = 0;
-static RegisterPass<AOP> X("aop", "AOP World Pass");
+static RegisterPass<AOP> X("aop", "Aspect Instrumentation Pass");
 
