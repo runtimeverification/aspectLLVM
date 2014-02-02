@@ -15,9 +15,12 @@ one can use:
   opt -load LLVMAOP.so -aop < input.bc > output.bc
 
 This command assumes the existence of an 'aspect.map' file in the current 
-directory containing space-separated pairs of method names 
-  fname hname
-and will locate all functions named fname in input.bc inserting as the first
-instruction in their body a call to hname.  hname is supposed to be a void
-function with no arguments.  The instrumented bitcode is saved into 
-output.bc
+directory containing lines of the form:
+  <when> <what> <fname> call <hname>
+where <when> ::= before | after
+and <what> ::= executing | calling
+currently after executing is not supported.
+<hname> is supposed to have the same signature as <fname> except that its 
+return type is void and, for after calling instrumentation point, the 
+returned value is its first argument.
+  The instrumented bitcode is saved into output.bc
