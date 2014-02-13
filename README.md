@@ -12,15 +12,16 @@ To use it, load the shared library with the opt tool and use the -aop
 option which is made available by this pass.  
 In Linux, assuming the path to LLVMAOP.so is included in the library path,
 one can use:
-  opt -load LLVMAOP.so -aop < input.bc > output.bc
+  opt -load LLVMAOP.so -aop input.bc -o output.bc
 
 This command assumes the existence of an 'aspect.map' file in the current 
 directory containing lines of the form:
   <when> <what> <fname> call <hname>
-where <when> ::= before | after
+where <when> ::= before | after | instead-of
 and <what> ::= executing | calling
-currently after executing is not supported.
+currently "executing" is only supported for "before"
 <hname> is supposed to have the same signature as <fname> except that its 
-return type is void and, for after calling instrumentation point, the 
-returned value is its first argument.
-  The instrumented bitcode is saved into output.bc
+return type is void and, for after calling instrumentation point, it has 
+an additional first argument to hold the return value.
+The instrumented bitcode is saved into output.bc (which can be the same as
+ input.bc)

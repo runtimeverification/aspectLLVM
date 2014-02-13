@@ -235,6 +235,8 @@ namespace {
         std::string function, 
         std::string hookFn) {
       Function *F = M.getFunction(function.c_str());
+      if (F == NULL) return;
+      if (F->empty()) return; // function body not present.
       Constant *hookFunc = M.getOrInsertFunction(hookFn.c_str(), 
           F->getFunctionType());
 
