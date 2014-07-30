@@ -26,7 +26,8 @@ The aspect file is expected to contain lines of the form:
 
 where `<when> ::= before | after | instead-of`
 and `<what> ::= executing | calling`
-currently "executing" is only supported for "before"
+(currently "executing" is only supported for "before")
+
 `<hname>` is supposed to have the same signature as `<fname>` except that its 
 return type is void and, for after calling instrumentation point, it has 
 an additional first argument to hold the return value.
