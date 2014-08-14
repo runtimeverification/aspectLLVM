@@ -42,7 +42,16 @@ namespace {
     std::vector<CallInstInstrPoint*> insteadOfInstPoints; 
 
     void readConfig() {
-      std::ifstream str("aspect.map");
+      char* pAspectEnv;
+      char* pAspect;
+      pAspectEnv = getenv ("RVX_ASPECT");
+      if (pAspectEnv == NULL) {
+         pAspect = strdup("aspect.map");
+      } else {
+         pAspect = strdup(pAspectEnv);
+      }
+      std::ifstream str(pAspect);
+      free(pAspect);
       std::string key,value,when,what,action;
       while ((str >> when)) {
         assert (when == "before" || when == "after" || "instead-of");
